@@ -17,6 +17,8 @@
 -export([connect/0, connect/1, connect/2, connect/3, disconnect/1]).
 -export([send_badge/3, send_message/2, send_message/3, send_message/4, send_message/5,
          send_message/6, send_message/7, send_message/8]).
+-export([send_badge_sync/3, send_message_sync/2, send_message_sync/3, send_message_sync/4, send_message_sync/5,
+         send_message_sync/6, send_message_sync/7, send_message_sync/8]).
 -export([estimate_available_bytes/1]).
 -export([message_id/0, expiry/1, timestamp/1]).
 
@@ -117,6 +119,74 @@ send_message(ConnId, DeviceToken, Alert, Badge, Sound) ->
                                  badge = Badge,
                                  sound = Sound,
                                  device_token = DeviceToken}).
+
+%% @doc Sends a message to Apple
+-spec send_message_sync(pid(), #apns_msg{}) -> ok.
+send_message_sync(Pid, Msg) ->
+  gen_server:call(Pid, Msg).
+
+%% @doc Sends a message to Apple with just a badge
+-spec send_badge_sync(pid(), string(), integer()) -> ok.
+send_badge_sync(Pid, DeviceToken, Badge) ->
+  send_message_sync(Pid, #apns_msg{device_token = DeviceToken,
+                                      badge = Badge}).
+
+%% @doc Sends a message to Apple with just an alert
+-spec send_message_sync(pid(), string(), alert()) -> ok.
+send_message_sync(Pid, DeviceToken, Alert) ->
+  send_message_sync(Pid, #apns_msg{device_token = DeviceToken,
+                                      alert = Alert}).
+
+%% @doc Sends a message to Apple with an alert and a badge
+-spec send_message_sync(pid(), Token::string(), Alert::alert(), Badge::integer()) -> ok.
+send_message_sync(Pid, DeviceToken, Alert, Badge) ->
+  send_message_sync(Pid, #apns_msg{device_token = DeviceToken,
+                                      badge = Badge,
+                                      alert = Alert}).
+
+%% @doc Sends a full message to Apple
+-spec send_message_sync(pid(), Token::string(), Alert::alert(), Badge::integer(),
+                        Sound::apns_str()) -> ok.
+send_message_sync(Pid, DeviceToken, Alert, Badge, Sound) ->
+  send_message_sync(Pid, #apns_msg{alert = Alert,
+                                      badge = Badge,
+                                      sound = Sound,
+                                      device_token = DeviceToken}).
+
+%% @doc Sends a full message to Apple (complete with expiry)
+-spec send_message_sync(pid(), Token::string(), Alert::alert(), Badge::integer(),
+                        Sound::apns_str(), Expiry::non_neg_integer()) -> ok.
+send_message_sync(Pid, DeviceToken, Alert, Badge, Sound, Expiry) ->
+  send_message_sync(Pid, #apns_msg{alert = Alert,
+                                      badge = Badge,
+                                      sound = Sound,
+                                      expiry= Expiry,
+                                      device_token = DeviceToken}).
+
+%% @doc Sends a full message to Apple with expiry and extra arguments
+-spec send_message_sync(pid(), Token::string(), Alert::alert(), Badge::integer(),
+                        Sound::apns_str(), Expiry::non_neg_integer(),
+                        ExtraArgs::[apns_mochijson2:json_property()]) -> ok.
+send_message_sync(Pid, DeviceToken, Alert, Badge, Sound, Expiry, ExtraArgs) ->
+  send_message_sync(Pid, #apns_msg{alert = Alert,
+                                     badge = Badge,
+                                     sound = Sound,
+                                     extra = ExtraArgs,
+                                     expiry= Expiry,
+                                     device_token = DeviceToken}).
+
+%% @doc Sends a full message to Apple with id, expiry and extra arguments
+-spec send_message_sync(pid(), MsgId::binary(), Token::string(), Alert::alert(),
+                        Badge::integer(), Sound::apns_str(), Expiry::non_neg_integer(),
+                        ExtraArgs::[apns_mochijson2:json_property()]) -> ok.
+send_message_sync(Pid, MsgId, DeviceToken, Alert, Badge, Sound, Expiry, ExtraArgs) ->
+  send_message_sync(Pid, #apns_msg{id     = MsgId,
+                                     alert  = Alert,
+                                     badge  = Badge,
+                                     sound  = Sound,
+                                     extra  = ExtraArgs,
+                                     expiry = Expiry,
+                                     device_token = DeviceToken}).
 
 %% @doc Predicts the number of bytes left in a message for additional data.
 -spec estimate_available_bytes(#apns_msg{}) -> integer().
