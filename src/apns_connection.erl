@@ -13,7 +13,7 @@
 -include("localized.hrl").
 
 -export([start_link/1, start_link/2, init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
--export([send_message/2, stop/1]).
+-export([send_message/2, send_message_sync/2, stop/1]).
 -export([build_payload/1]).
 
 -record(state, {out_socket        :: tuple(),
@@ -31,6 +31,11 @@
 -spec send_message(apns:conn_id(), #apns_msg{}) -> ok.
 send_message(ConnId, Msg) ->
   gen_server:cast(ConnId, Msg).
+
+%% @doc  Sends a syncronous message to apple through the connection
+-spec send_message_sync(apns:conn_id(), #apns_msg{}) -> ok.
+send_message_sync(ConnId, Msg) ->
+  gen_server:call(ConnId, Msg).
 
 %% @doc  Stops the connection
 -spec stop(apns:conn_id()) -> ok.
@@ -114,7 +119,26 @@ open_feedback(Connection) ->
   end.
 
 %% @hidden
--spec handle_call(X, reference(), state()) -> {stop, {unknown_request, X}, {unknown_request, X}, state()}.
+-spec handle_call(X, reference(), state()) -> {reply, ok, state()} | {stop, {unknown_request, X}, state()}.
+handle_call(Msg, From, State=#state{out_socket=undefined,connection=Connection}) ->
+  try
+    error_logger:info_msg("Reconnecting to APNS...~n"),
+    case open_out(Connection) of
+      {ok, Socket} -> handle_call(Msg, From, State#state{out_socket=Socket});
+      {error, Reason} -> {stop, Reason}
+    end
+  catch
+    _:{error, Reason2} -> {stop, Reason2}
+  end;
+
+handle_call(Msg, _From, #state{out_socket=Socket} = State) when is_record(Msg, apns_msg) ->
+  case build_and_send(Msg, Socket) of
+    ok ->
+      {reply, ok, State};
+    {error, Reason} ->
+      {stop, {error, Reason}, State}
+  end;
+
 handle_call(Request, _From, State) ->
   {stop, {unknown_request, Request}, {unknown_request, Request}, State}.
 
@@ -131,11 +155,8 @@ handle_cast(Msg, State=#state{out_socket=undefined,connection=Connection}) ->
     _:{error, Reason2} -> {stop, Reason2}
   end;
 
-handle_cast(Msg, State) when is_record(Msg, apns_msg) ->
-  Socket = State#state.out_socket,
-  Payload = build_payload(Msg),
-  BinToken = hexstr_to_bin(Msg#apns_msg.device_token),
-  case send_payload(Socket, Msg#apns_msg.id, Msg#apns_msg.expiry, BinToken, Payload) of
+handle_cast(Msg, #state{out_socket=Socket} = State) when is_record(Msg, apns_msg) ->
+  case build_and_send(Msg, Socket) of
     ok ->
       {noreply, State};
     {error, Reason} ->
@@ -235,6 +256,11 @@ code_change(_OldVsn, State, _Extra) ->  {ok, State}.
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %% Private functions
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+build_and_send(Msg, Socket) ->
+  Payload = build_payload(Msg),
+  BinToken = hexstr_to_bin(Msg#apns_msg.device_token),
+  send_payload(Socket, Msg#apns_msg.id, Msg#apns_msg.expiry, BinToken, Payload).
+
 build_payload(#apns_msg{alert = Alert,
                         badge = Badge,
                         sound = Sound,
