@@ -205,17 +205,16 @@ handle_info({ssl, SslSocket, Data}, State = #state{in_socket  = SslSocket,
       Length:2/big-unsigned-integer-unit:8,
       Token:Length/binary,
       Rest/binary>> ->
-%%       try
-%%           lager:debug("***** TimeT: [~p], Length: [~p], Token: [~p]", [TimeT, Length, Token]),
+      try
+          error_logger:error_msg("***** TimeT: [~p], Length: [~p], Token: [~p]", [TimeT, Length, Token]),
           ApnsTimestamp = apns:timestamp(TimeT),
           HexToken = bin_to_hexstr(Token),
-%%           lager:debug("***** ApnsTimestamp: [~p], Length: [~p]", [ApnsTimestamp, HexToken]),
-%%           lager:debug("***** Feedback function: ~p", [Feedback]),
-          Feedback({ApnsTimestamp, HexToken}),
-%%       catch
-%%         _:Error ->
-%%           error_logger:error_msg("Error trying to inform feedback token ~p:~n\t~p~n", [Token, Error])
-%%       end,
+          error_logger:error_msg("***** ApnsTimestamp: [~p], Length: [~p]", [ApnsTimestamp, HexToken]),
+          Feedback({ApnsTimestamp, HexToken})
+      catch
+        _:Error ->
+          error_logger:error_msg("Error trying to inform feedback token ~p:~n\t~p~nStack trace: ~p~n", [Token, Error, erlang:get_stacktrace()])
+      end,
       case erlang:size(Rest) of
         0 -> {noreply, State#state{in_buffer = <<>>}}; %% It was a whole package
         _ -> handle_info({ssl, SslSocket, Rest}, State#state{in_buffer = <<>>})
