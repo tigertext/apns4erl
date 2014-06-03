@@ -206,10 +206,8 @@ handle_info({ssl, SslSocket, Data}, State = #state{in_socket  = SslSocket,
       Token:Length/binary,
       Rest/binary>> ->
       try
-          error_logger:info_msg("***** TimeT: [~p], Length: [~p], Token: [~p]", [TimeT, Length, Token]),
           ApnsTimestamp = apns:timestamp(TimeT),
           HexToken = bin_to_hexstr(Token),
-          error_logger:info_msg("***** ApnsTimestamp: [~p], Length: [~p]", [ApnsTimestamp, HexToken]),
           Feedback({ApnsTimestamp, HexToken})
       catch
         _:Error ->
