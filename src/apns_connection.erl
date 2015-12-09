@@ -84,7 +84,7 @@ open_out(Connection) ->
     undefined -> SslOpts;
     Password -> [{password, Password} | SslOpts]
   end ++
-  [{versions,['tlsv1']}], %% Work around OTP TLS bug: https://github.com/inaka/apns4erl/issues/57,
+  [{versions,['tlsv1.1']}], %% Work around OTP TLS bug: https://github.com/inaka/apns4erl/issues/57,
   case ssl:connect(
     Connection#apns_connection.apple_host,
     Connection#apns_connection.apple_port,
