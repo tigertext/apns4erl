@@ -83,8 +83,8 @@ open_out(Connection) ->
   RealSslOpts = case Connection#apns_connection.cert_password of
     undefined -> SslOpts;
     Password -> [{password, Password} | SslOpts]
-  end ++
-  [{versions,['tlsv1.1']}], %% Work around OTP TLS bug: https://github.com/inaka/apns4erl/issues/57,
+  end,
+
   case ssl:connect(
     Connection#apns_connection.apple_host,
     Connection#apns_connection.apple_port,
