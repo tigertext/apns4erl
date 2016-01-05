@@ -183,8 +183,8 @@ handle_info({ssl, SslSocket, Data}, State = #state{out_socket = SslSocket,
             _ -> noop
           catch
             _:ErrorResult ->
-              error_logger:error_msg("Error trying to inform error (~p) msg ~p:~n\t~p~n",
-                                     [Status, MsgId, ErrorResult])
+              error_logger:error_msg("Error trying to inform error (~p) msg:~n\t~p~n",
+                                     [Status, ErrorResult])
           end,
           case erlang:size(Rest) of
             0 -> {noreply, State#state{out_buffer = <<>>}}; %% It was a whole package
@@ -310,8 +310,6 @@ send_payload(Socket, MsgId, Expiry, BinToken, Payload) ->
                 BinToken/binary,
                 PayloadLength:16/big,
                 BinPayload/binary>>],
-    error_logger:info_msg("Sending msg ~p (expires on ~p)~n",
-                         [MsgId, Expiry]),
     ssl:send(Socket, Packet).
 
 hexstr_to_bin(S) ->
