@@ -120,7 +120,7 @@ open_feedback(Connection) ->
   end.
 
 %% @hidden
--spec handle_call(X, reference(), state()) -> {reply, ok, state()} | {stop, {unknown_request, X}, state()}.
+-spec handle_call(X, {pid(), reference()}, state()) -> {reply, ok, state()} | {stop, {unknown_request, X}, state()}.
 handle_call(Msg, From, State=#state{out_socket=undefined,connection=Connection}) ->
   try
     error_logger:info_msg("Reconnecting to APNS...~n"),
