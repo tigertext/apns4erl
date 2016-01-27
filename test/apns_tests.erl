@@ -102,7 +102,7 @@ run() ->
   end.
 
 log_error(MsgId, Status) ->
-  error_logger:error_msg("Error on msg ~p: ~p~n", [MsgId, Status]).
+  error_logger:error_msg("Error on msg ~p: ~p~n", [apns:message_id_print_str(MsgId), Status]).
 
 log_feedback(Token) ->
   error_logger:warning_msg("Device with token ~p removed the app~n", [Token]).

@@ -20,7 +20,7 @@
 -export([send_badge_sync/3, send_message_sync/2, send_message_sync/3, send_message_sync/4, send_message_sync/5,
          send_message_sync/6, send_message_sync/7, send_message_sync/8]).
 -export([estimate_available_bytes/1]).
--export([message_id/0, expiry/1, timestamp/1]).
+-export([message_id/0, message_id_print_str/1, expiry/1, timestamp/1]).
 
 -type status() :: no_errors | processing_error | missing_token | missing_topic | missing_payload |
                   missing_token_size | missing_topic_size | missing_payload_size | invalid_token |
@@ -237,6 +237,17 @@ message_id() ->
   First = Secs rem 65536,
   Last = MicroSecs rem 65536,
   <<First:2/unsigned-integer-unit:8, Last:2/unsigned-integer-unit:8>>.
+
+%% @doc  Converts a "unique" message Id to a printable value
+-spec message_id_print_str(binary()) -> list()
+                                            | {error, {bad_binary_msg_id, binary()}}
+                                            | {error, {bad_msg_id_type,   any()}}.
+message_id_print_str(<<First:2/unsigned-integer-unit:8, Last:2/unsigned-integer-unit:8>>) ->
+    "{" ++ integer_to_list(First) ++ ":" ++ integer_to_list(Last) ++ "}";
+message_id_print_str(Bad_Binary) when is_binary(Bad_Binary) ->
+    {error, {bad_binary_msg_id, Bad_Binary}};
+message_id_print_str(Bad_Msg_Id_Type) ->
+    {error, {bad_msg_id_type, Bad_Msg_Id_Type}}.
 
 %% @doc  Generates a valid expiry value for messages.
 %%       If called with <code>none</code> as the parameter, it will return a <a>no-expire</a> value.
