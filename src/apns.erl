@@ -27,6 +27,7 @@
                   unknown.
 -export_type([status/0]).
 
+-type msg_id()  :: <<_:32>>.
 -type conn_id() :: atom() | pid().
 -export_type([conn_id/0]).
 
@@ -176,7 +177,7 @@ send_message_sync(Pid, DeviceToken, Alert, Badge, Sound, Expiry, ExtraArgs) ->
                                      device_token = DeviceToken}).
 
 %% @doc Sends a full message to Apple with id, expiry and extra arguments
--spec send_message_sync(pid(), MsgId::binary(), Token::string(), Alert::alert(),
+-spec send_message_sync(pid(), msg_id(), Token::string(), Alert::alert(),
                         Badge::integer(), Sound::apns_str(), Expiry::non_neg_integer(),
                         ExtraArgs::[apns_mochijson2:json_property()]) -> ok.
 send_message_sync(Pid, MsgId, DeviceToken, Alert, Badge, Sound, Expiry, ExtraArgs) ->
@@ -217,7 +218,7 @@ send_message(ConnId, DeviceToken, Alert, Badge, Sound, Expiry, ExtraArgs) ->
                                  device_token = DeviceToken}).
 
 %% @doc Sends a full message to Apple with id, expiry and extra arguments
--spec send_message(conn_id(), MsgId::binary(), Token::string(), Alert::alert(),
+-spec send_message(conn_id(), msg_id(), Token::string(), Alert::alert(),
                    Badge::integer(), Sound::apns_str(), Expiry::non_neg_integer(),
                    ExtraArgs::[apns_mochijson2:json_property()]) -> ok.
 send_message(ConnId, MsgId, DeviceToken, Alert, Badge, Sound, Expiry, ExtraArgs) ->
@@ -230,7 +231,7 @@ send_message(ConnId, MsgId, DeviceToken, Alert, Badge, Sound, Expiry, ExtraArgs)
                                  device_token = DeviceToken}).
 
 %% @doc  Generates an "unique" and valid message Id
--spec message_id() -> binary().
+-spec message_id() -> msg_id().
 message_id() ->
   {_, _, MicroSecs} = erlang:now(),
   Secs = calendar:datetime_to_gregorian_seconds(calendar:universal_time()),
@@ -239,9 +240,7 @@ message_id() ->
   <<First:2/unsigned-integer-unit:8, Last:2/unsigned-integer-unit:8>>.
 
 %% @doc  Converts a "unique" message Id to a printable value
--spec message_id_print_str(binary()) -> list()
-                                            | {error, {bad_binary_msg_id, binary()}}
-                                            | {error, {bad_msg_id_type,   any()}}.
+-spec message_id_print_str(msg_id()) -> list().
 message_id_print_str(<<First:2/unsigned-integer-unit:8, Last:2/unsigned-integer-unit:8>>) ->
     "{" ++ integer_to_list(First) ++ ":" ++ integer_to_list(Last) ++ "}";
 message_id_print_str(Bad_Binary) when is_binary(Bad_Binary) ->
