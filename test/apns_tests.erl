@@ -37,6 +37,11 @@ apns_test_() ->
 %%% Tests
 run() ->
   Now = lists:flatten(io_lib:format("~p", [calendar:local_time()])),
+
+  %% IK-7 logging error regression test
+  BadMsgId = <<49319:2/unsigned-integer-unit:8, 55994:2/unsigned-integer-unit:8>>,
+  log_error(BadMsgId, invalid_token),
+
   ?assertEqual(ok, apns:start()),
   {ok, Pid} = apns:connect(?TEST_CONNECTION, fun log_error/2, fun log_feedback/1),
   Ref = erlang:monitor(process, Pid),
@@ -102,7 +107,7 @@ run() ->
   end.
 
 log_error(MsgId, Status) ->
-  error_logger:error_msg("Error on msg ~p: ~p~n", [apns:message_id_print_str(MsgId), Status]).
+  error_logger:error_msg("Error on msg ~p: ~p~n", [MsgId, Status]).
 
 log_feedback(Token) ->
   error_logger:warning_msg("Device with token ~p removed the app~n", [Token]).

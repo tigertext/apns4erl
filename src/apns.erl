@@ -20,7 +20,7 @@
 -export([send_badge_sync/3, send_message_sync/2, send_message_sync/3, send_message_sync/4, send_message_sync/5,
          send_message_sync/6, send_message_sync/7, send_message_sync/8]).
 -export([estimate_available_bytes/1]).
--export([message_id/0, message_id_print_str/1, expiry/1, timestamp/1]).
+-export([message_id/0, message_id_print_str/1, expiry/1, timestamp/1, timestamp_str/1]).
 
 -type status() :: no_errors | processing_error | missing_token | missing_topic | missing_payload |
                   missing_token_size | missing_topic_size | missing_payload_size | invalid_token |
@@ -263,6 +263,11 @@ expiry(Date) ->
 -spec timestamp(pos_integer()) -> calendar:datetime().
 timestamp(Secs) ->
   calendar:gregorian_seconds_to_datetime(Secs + ?EPOCH).
+
+-spec timestamp_str(pos_integer()) -> string().
+timestamp_str(Secs) ->
+    {{YY, MM, DD}, {HH, Min, SS}} = timestamp(Secs),
+    lists:flatten(io_lib:format("~4.4.0w-~2.2.0w-~2.2.0w ~2.2.0w:~2.2.0w:~2.2.0w", [YY, MM, DD, HH, Min, SS])).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 get_env(K, Def) ->

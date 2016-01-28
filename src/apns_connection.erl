@@ -259,6 +259,7 @@ build_and_send(Msg, Socket) ->
   BinToken = hexstr_to_bin(Msg#apns_msg.device_token),
   send_payload(Socket, Msg#apns_msg.id, Msg#apns_msg.expiry, BinToken, Payload).
 
+-spec build_payload(#apns_msg{}) -> iolist().
 build_payload(#apns_msg{alert = Alert,
                         badge = Badge,
                         sound = Sound,
@@ -310,7 +311,7 @@ send_payload(Socket, MsgId, Expiry, BinToken, Payload) ->
                 BinToken/binary,
                 PayloadLength:16/big,
                 BinPayload/binary>>],
-    Info_Args = [apns:message_id_print_str(MsgId), Expiry],
+    Info_Args = [apns:message_id_print_str(MsgId), apns:timestamp_str(Expiry)],
     error_logger:info_msg("Sending msg ~p (expires on ~p)~n", Info_Args),
     ssl:send(Socket, Packet).
 
