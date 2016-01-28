@@ -183,7 +183,7 @@ handle_info({ssl, SslSocket, Data}, State = #state{out_socket = SslSocket,
             _ -> noop
           catch
             _:ErrorResult ->
-              error_logger:error_msg("Error trying to inform error (~p) msg ~p:~n\t~p~n",
+              error_logger:error_msg("Error trying to inform error (~p) msg ~s : ~p",
                                      [Status, apns:message_id_print_str(MsgId), ErrorResult])
           end,
           case erlang:size(Rest) of
@@ -312,7 +312,7 @@ send_payload(Socket, MsgId, Expiry, BinToken, Payload) ->
                 PayloadLength:16/big,
                 BinPayload/binary>>],
     Info_Args = [apns:message_id_print_str(MsgId), apns:timestamp_str(Expiry)],
-    error_logger:info_msg("Sending msg ~p (expires on ~p)~n", Info_Args),
+    error_logger:info_msg("Sending msg ~s (expires on ~s)", Info_Args),
     ssl:send(Socket, Packet).
 
 hexstr_to_bin(S) ->
