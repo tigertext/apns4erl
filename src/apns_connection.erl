@@ -120,7 +120,7 @@ open_feedback(Connection) ->
   end.
 
 %% @hidden
--spec handle_call(X, reference(), state()) -> {reply, ok, state()} | {stop, {unknown_request, X}, state()}.
+-spec handle_call(X, {pid(), reference()}, state()) -> {reply, ok, state()} | {stop, {unknown_request, X}, state()}.
 handle_call(Msg, From, State=#state{out_socket=undefined,connection=Connection}) ->
   try
     error_logger:info_msg("Reconnecting to APNS...~n"),
@@ -132,7 +132,7 @@ handle_call(Msg, From, State=#state{out_socket=undefined,connection=Connection})
     _:{error, Reason2} -> {stop, Reason2}
   end;
 
-handle_call(Msg, _From, #state{out_socket=Socket} = State) when is_record(Msg, apns_msg) ->
+handle_call(#apns_msg{} = Msg, _From, #state{out_socket=Socket} = State) ->
   case build_and_send(Msg, Socket) of
     ok ->
       {reply, ok, State};
@@ -156,7 +156,7 @@ handle_cast(Msg, State=#state{out_socket=undefined,connection=Connection}) ->
     _:{error, Reason2} -> {stop, Reason2}
   end;
 
-handle_cast(Msg, #state{out_socket=Socket} = State) when is_record(Msg, apns_msg) ->
+handle_cast(#apns_msg{} = Msg, #state{out_socket=Socket} = State) ->
   case build_and_send(Msg, Socket) of
     ok ->
       {noreply, State};
@@ -183,8 +183,8 @@ handle_info({ssl, SslSocket, Data}, State = #state{out_socket = SslSocket,
             _ -> noop
           catch
             _:ErrorResult ->
-              error_logger:error_msg("Error trying to inform error (~p) msg:~n\t~p~n",
-                                     [Status, ErrorResult])
+              error_logger:error_msg("Error trying to inform error (~p) msg ~p:~n\t~p~n",
+                                     [Status, apns:message_id_print_str(MsgId), ErrorResult])
           end,
           case erlang:size(Rest) of
             0 -> {noreply, State#state{out_buffer = <<>>}}; %% It was a whole package
@@ -259,6 +259,7 @@ build_and_send(Msg, Socket) ->
   BinToken = hexstr_to_bin(Msg#apns_msg.device_token),
   send_payload(Socket, Msg#apns_msg.id, Msg#apns_msg.expiry, BinToken, Payload).
 
+-spec build_payload(#apns_msg{}) -> iolist().
 build_payload(#apns_msg{alert = Alert,
                         badge = Badge,
                         sound = Sound,
@@ -310,6 +311,8 @@ send_payload(Socket, MsgId, Expiry, BinToken, Payload) ->
                 BinToken/binary,
                 PayloadLength:16/big,
                 BinPayload/binary>>],
+    Info_Args = [apns:message_id_print_str(MsgId), apns:timestamp_str(Expiry)],
+    error_logger:info_msg("Sending msg ~p (expires on ~p)~n", Info_Args),
     ssl:send(Socket, Packet).
 
 hexstr_to_bin(S) ->

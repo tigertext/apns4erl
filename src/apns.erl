@@ -20,13 +20,14 @@
 -export([send_badge_sync/3, send_message_sync/2, send_message_sync/3, send_message_sync/4, send_message_sync/5,
          send_message_sync/6, send_message_sync/7, send_message_sync/8]).
 -export([estimate_available_bytes/1]).
--export([message_id/0, expiry/1, timestamp/1]).
+-export([message_id/0, message_id_print_str/1, expiry/1, timestamp/1, timestamp_str/1]).
 
 -type status() :: no_errors | processing_error | missing_token | missing_topic | missing_payload |
                   missing_token_size | missing_topic_size | missing_payload_size | invalid_token |
                   unknown.
 -export_type([status/0]).
 
+-type msg_id()  :: <<_:32>>.
 -type conn_id() :: atom() | pid().
 -export_type([conn_id/0]).
 
@@ -176,7 +177,7 @@ send_message_sync(Pid, DeviceToken, Alert, Badge, Sound, Expiry, ExtraArgs) ->
                                      device_token = DeviceToken}).
 
 %% @doc Sends a full message to Apple with id, expiry and extra arguments
--spec send_message_sync(pid(), MsgId::binary(), Token::string(), Alert::alert(),
+-spec send_message_sync(pid(), msg_id(), Token::string(), Alert::alert(),
                         Badge::integer(), Sound::apns_str(), Expiry::non_neg_integer(),
                         ExtraArgs::[apns_mochijson2:json_property()]) -> ok.
 send_message_sync(Pid, MsgId, DeviceToken, Alert, Badge, Sound, Expiry, ExtraArgs) ->
@@ -217,7 +218,7 @@ send_message(ConnId, DeviceToken, Alert, Badge, Sound, Expiry, ExtraArgs) ->
                                  device_token = DeviceToken}).
 
 %% @doc Sends a full message to Apple with id, expiry and extra arguments
--spec send_message(conn_id(), MsgId::binary(), Token::string(), Alert::alert(),
+-spec send_message(conn_id(), msg_id(), Token::string(), Alert::alert(),
                    Badge::integer(), Sound::apns_str(), Expiry::non_neg_integer(),
                    ExtraArgs::[apns_mochijson2:json_property()]) -> ok.
 send_message(ConnId, MsgId, DeviceToken, Alert, Badge, Sound, Expiry, ExtraArgs) ->
@@ -230,13 +231,22 @@ send_message(ConnId, MsgId, DeviceToken, Alert, Badge, Sound, Expiry, ExtraArgs)
                                  device_token = DeviceToken}).
 
 %% @doc  Generates an "unique" and valid message Id
--spec message_id() -> binary().
+-spec message_id() -> msg_id().
 message_id() ->
-  {_, _, MicroSecs} = erlang:now(),
+  {_, _, MicroSecs} = os:timestamp(),
   Secs = calendar:datetime_to_gregorian_seconds(calendar:universal_time()),
   First = Secs rem 65536,
   Last = MicroSecs rem 65536,
   <<First:2/unsigned-integer-unit:8, Last:2/unsigned-integer-unit:8>>.
+
+%% @doc  Converts a "unique" message Id to a printable value
+-spec message_id_print_str(msg_id()) -> list().
+message_id_print_str(<<First:2/unsigned-integer-unit:8, Last:2/unsigned-integer-unit:8>>) ->
+    "{" ++ integer_to_list(First) ++ ":" ++ integer_to_list(Last) ++ "}";
+message_id_print_str(Bad_Binary) when is_binary(Bad_Binary) ->
+    {error, {bad_binary_msg_id, Bad_Binary}};
+message_id_print_str(Bad_Msg_Id_Type) ->
+    {error, {bad_msg_id_type, Bad_Msg_Id_Type}}.
 
 %% @doc  Generates a valid expiry value for messages.
 %%       If called with <code>none</code> as the parameter, it will return a <a>no-expire</a> value.
@@ -253,6 +263,11 @@ expiry(Date) ->
 -spec timestamp(pos_integer()) -> calendar:datetime().
 timestamp(Secs) ->
   calendar:gregorian_seconds_to_datetime(Secs + ?EPOCH).
+
+-spec timestamp_str(pos_integer()) -> string().
+timestamp_str(Secs) ->
+    {{YY, MM, DD}, {HH, Min, SS}} = timestamp(Secs),
+    lists:flatten(io_lib:format("~4.4.0w-~2.2.0w-~2.2.0w ~2.2.0w:~2.2.0w:~2.2.0w", [YY, MM, DD, HH, Min, SS])).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 get_env(K, Def) ->
