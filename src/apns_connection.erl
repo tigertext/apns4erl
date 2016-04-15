@@ -12,7 +12,7 @@
 -include("apns.hrl").
 -include("localized.hrl").
 
--export([start_link/1, start_link/2, init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
+-export([start/1, start/2, start_link/1, start_link/2, init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
 -export([send_message/2, send_message_sync/2, stop/1]).
 -export([build_payload/1]).
 
@@ -43,9 +43,20 @@ stop(ConnId) ->
   gen_server:cast(ConnId, stop).
 
 %% @hidden
+-spec start(atom(), #apns_connection{}) -> {ok, pid()} | {error, {already_started, pid()}}.
+start(Name, Connection) ->
+  gen_server:start({local, Name}, ?MODULE, Connection, []).
+
+%% @hidden
+-spec start(#apns_connection{}) -> {ok, pid()}.
+start(Connection) ->
+  gen_server:start(?MODULE, Connection, []).
+
+%% @hidden
 -spec start_link(atom(), #apns_connection{}) -> {ok, pid()} | {error, {already_started, pid()}}.
 start_link(Name, Connection) ->
   gen_server:start_link({local, Name}, ?MODULE, Connection, []).
+
 %% @hidden
 -spec start_link(#apns_connection{}) -> {ok, pid()}.
 start_link(Connection) ->
