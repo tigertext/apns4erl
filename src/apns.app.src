@@ -1,21 +1,20 @@
-{application, apns,
- [
-  {description, ""},
-  {vsn, "1.0"},
+{application, apns, [
+  {description, "APNs provider for Apple Push Notification services (APNs) in Erlang. It supports the HTTP2 API."},
+  {vsn, "2.2.0"},
+  {id, "apns4erl"},
+  {pkg_name, apns4erl},
   {registered, []},
   {applications, [
-                  kernel,
-                  stdlib,
-                  ssl
-                 ]},
+    kernel,
+    stdlib,
+    jsx,
+    chatterbox,
+    base64url
+  ]},
+  {modules, []},
   {mod, {apns_app, []}},
-  {env, [{apple_host,       "gateway.sandbox.push.apple.com"},
-         {apple_port,       2195},
-         {cert_file,        "priv/cert.pem"},
-         {key_file,         undefined},
-         {timeout,          30000},
-         {feedback_host,    "feedback.sandbox.push.apple.com"},
-         {feedback_port,    2196},
-         {feedback_timeout, 600000} %% 10 Minutes
-        ]}
- ]}.
+  {maintainers,["Inaka"]},
+  {licenses,["Apache 2.0"]},
+  {links,[{"Github","https://github.com/inaka/apns4erl"}]},
+  {build_tools, ["rebar3"]}
+]}.

@@ -1,5 +1,4 @@
-%%% @hidden
-%%% @doc apns4erl's Application behaviour.
+%%% @doc Contains util functions.
 %%%
 %%% Copyright 2017 Erlang Solutions Ltd.
 %%%
@@ -17,24 +16,23 @@
 %%% @end
 %%% @copyright Inaka <hello@inaka.net>
 %%%
--module(apns_app).
--author("Felipe Ripoll <felipe@inakanetworks.com>").
+-module(apns_os).
 
--behaviour(application).
-
-%% Application callbacks
--export([ start/2
-        , stop/1
-        ]).
+% API
+-export([cmd/1]).
 
 %%%===================================================================
-%%% Application callbacks
+%%% API
 %%%===================================================================
 
--spec start(term(), term()) -> {error, term()} | {ok, pid()}.
-start(_StartType, _StartArgs) ->
-  apns_sup:start_link().
-
--spec stop(term()) -> ok.
-stop(_State) ->
-  ok.
+-spec cmd(string()) -> {0 | 1, string()}.
+cmd(Cmd) ->
+  NewCmd = "
+    R=$(" ++ Cmd ++ ")\n
+    if [ $? -eq 0 ];then\n
+      echo \"0::$R\"\n
+    fi",
+  case string:tokens(os:cmd(NewCmd), "::") of
+    ["0", Result] -> {0, Result};
+    Error         -> {1, Error}
+  end.
