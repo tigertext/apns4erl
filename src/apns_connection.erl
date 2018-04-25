@@ -1,352 +1,397 @@
-%%%-------------------------------------------------------------------
-%%% @author Fernando Benavides <fernando.benavides@inakanetworks.com>
-%%% @copyright (C) 2010 Fernando Benavides <fernando.benavides@inakanetworks.com>
-%%% @doc apns4erl connection process
+%%% @doc This gen_server handles the APNs Connection.
+%%%
+%%% Copyright 2017 Erlang Solutions Ltd.
+%%%
+%%% Licensed under the Apache License, Version 2.0 (the "License");
+%%% you may not use this file except in compliance with the License.
+%%% You may obtain a copy of the License at
+%%%
+%%%     http://www.apache.org/licenses/LICENSE-2.0
+%%%
+%%% Unless required by applicable law or agreed to in writing, software
+%%% distributed under the License is distributed on an "AS IS" BASIS,
+%%% WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+%%% See the License for the specific language governing permissions and
+%%% limitations under the License.
 %%% @end
-%%%-------------------------------------------------------------------
+%%% @copyright Inaka <hello@inaka.net>
+%%%
 -module(apns_connection).
--author('Fernando Benavides <fernando.benavides@inakanetworks.com>').
+-author("Felipe Ripoll <felipe@inakanetworks.com>").
 
 -behaviour(gen_server).
 
--include("apns.hrl").
--include("localized.hrl").
+%% API
+-export([ start_link/2
+        , default_connection/2
+        , name/1
+        , host/1
+        , port/1
+        , certdata/1
+        , certfile/1
+        , keydata/1
+        , keyfile/1
+        , type/1
+        , http2_connection/1
+        , close_connection/1
+        , push_notification/4
+        , push_notification/5
+        ]).
 
--export([start/1, start/2, start_link/1, start_link/2, init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
--export([send_message/2, send_message_sync/2, stop/1]).
--export([build_payload/1]).
+%% gen_server callbacks
+-export([ init/1
+        , handle_call/3
+        , handle_cast/2
+        , handle_info/2
+        , terminate/2
+        , code_change/3
+        ]).
 
--record(state, {out_socket        :: tuple(),
-                in_socket         :: tuple(),
-                connection        :: #apns_connection{},
-                in_buffer = <<>>  :: binary(),
-                out_buffer = <<>> :: binary()}).
--type state() :: #state{}.
+-export_type([ name/0
+             , host/0
+             , port/0
+             , path/0
+             , connection/0
+             , notification/0
+             , type/0
+             ]).
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%% Public API
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+-type name()         :: atom().
+-type host()         :: string() | inet:ip_address().
+-type path()         :: string().
+-type notification() :: binary().
+-type type()         :: certdata | cert | token.
+-type keydata()      :: {'RSAPrivateKey' | 'DSAPrivateKey' | 'ECPrivateKey' |
+                         'PrivateKeyInfo'
+                        , binary()}.
+-type connection()   :: #{ name       := name()
+                         , apple_host := host()
+                         , apple_port := inet:port_number()
+                         , certdata   => binary()
+                         , certfile   => path()
+                         , keydata    => keydata()
+                         , keyfile    => path()
+                         , timeout    => integer()
+                         , type       := type()
+                         }.
 
-%% @doc  Sends a message to apple through the connection
--spec send_message(apns:conn_id(), #apns_msg{}) -> ok.
-send_message(ConnId, Msg) ->
-  gen_server:cast(ConnId, Msg).
+-type state()        :: #{ connection       := connection()
+                         , http2_connection := pid()
+                         , client           := pid()
+                         , backoff          := non_neg_integer()
+                         , backoff_ceiling  := non_neg_integer()
+                         }.
 
-%% @doc  Sends a syncronous message to apple through the connection
--spec send_message_sync(apns:conn_id(), #apns_msg{}) -> ok.
-send_message_sync(ConnId, Msg) ->
-  gen_server:call(ConnId, Msg).
+%%%===================================================================
+%%% API
+%%%===================================================================
 
-%% @doc  Stops the connection
--spec stop(apns:conn_id()) -> ok.
-stop(ConnId) ->
-  gen_server:cast(ConnId, stop).
+%% @doc starts the gen_server
+-spec start_link(connection(), pid()) ->
+  {ok, Pid :: pid()} | ignore | {error, Reason :: term()}.
+start_link(#{name := undefined} = Connection, Client) ->
+  gen_server:start_link(?MODULE, {Connection, Client}, []);
+start_link(Connection, Client) ->
+  Name = name(Connection),
+  gen_server:start_link({local, Name}, ?MODULE, {Connection, Client}, []).
 
-%% @hidden
--spec start(atom(), #apns_connection{}) -> {ok, pid()} | {error, {already_started, pid()}}.
-start(Name, Connection) ->
-  gen_server:start({local, Name}, ?MODULE, Connection, []).
+%% @doc Builds a connection() map from the environment variables.
+-spec default_connection(type(), name()) -> connection().
+default_connection(certdata, ConnectionName) ->
+  {ok, Host} = application:get_env(apns, apple_host),
+  {ok, Port} = application:get_env(apns, apple_port),
+  {ok, Cert} = application:get_env(apns, certdata),
+  {ok, Key} = application:get_env(apns, keydata),
+  {ok, Timeout} = application:get_env(apns, timeout),
 
-%% @hidden
--spec start(#apns_connection{}) -> {ok, pid()}.
-start(Connection) ->
-  gen_server:start(?MODULE, Connection, []).
+  #{ name       => ConnectionName
+   , apple_host => Host
+   , apple_port => Port
+   , certdata   => Cert
+   , keydata    => Key
+   , timeout    => Timeout
+   , type       => certdata
+  };
+default_connection(cert, ConnectionName) ->
+  {ok, Host} = application:get_env(apns, apple_host),
+  {ok, Port} = application:get_env(apns, apple_port),
+  {ok, Certfile} = application:get_env(apns, certfile),
+  {ok, Keyfile} = application:get_env(apns, keyfile),
+  {ok, Timeout} = application:get_env(apns, timeout),
 
-%% @hidden
--spec start_link(atom(), #apns_connection{}) -> {ok, pid()} | {error, {already_started, pid()}}.
-start_link(Name, Connection) ->
-  gen_server:start_link({local, Name}, ?MODULE, Connection, []).
+  #{ name       => ConnectionName
+   , apple_host => Host
+   , apple_port => Port
+   , certfile   => Certfile
+   , keyfile    => Keyfile
+   , timeout    => Timeout
+   , type       => cert
+  };
+default_connection(token, ConnectionName) ->
+  {ok, Host} = application:get_env(apns, apple_host),
+  {ok, Port} = application:get_env(apns, apple_port),
+  {ok, Timeout} = application:get_env(apns, timeout),
 
-%% @hidden
--spec start_link(#apns_connection{}) -> {ok, pid()}.
-start_link(Connection) ->
-  gen_server:start_link(?MODULE, Connection, []).
+  #{ name       => ConnectionName
+   , apple_host => Host
+   , apple_port => Port
+   , timeout    => Timeout
+   , type       => token
+  }.
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%% Server implementation, a.k.a.: callbacks
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% @doc Close the connection with APNs gracefully
+-spec close_connection(name() | pid()) -> ok.
+close_connection(ConnectionId) ->
+  gen_server:cast(ConnectionId, stop).
 
-%% @hidden
--spec init(#apns_connection{}) -> {ok, state()} | {stop, term()}.
-init(Connection) ->
-  try
-    case open_out(Connection) of
-      {ok, OutSocket} -> case open_feedback(Connection) of
-          {ok, InSocket} -> {ok, #state{out_socket=OutSocket, in_socket=InSocket, connection=Connection}};
-          {error, Reason} -> {stop, Reason}
-        end;
-      {error, Reason} -> {stop, Reason}
-    end
-  catch
-    _:{error, Reason2} -> {stop, Reason2}
+%% @doc Returns the http2's connection PID. This function is only used in tests.
+-spec http2_connection(name() | pid()) -> pid().
+http2_connection(ConnectionId) ->
+  gen_server:call(ConnectionId, http2_connection).
+
+%% @doc Pushes notification to certificate APNs connection.
+-spec push_notification( name() | pid()
+                       , apns:device_id()
+                       , notification()
+                       , apns:headers()) -> apns:response() | {error, not_connection_owner}.
+push_notification(ConnectionId, DeviceId, Notification, Headers) ->
+  case gen_server:call(ConnectionId, {push_notification, DeviceId, Notification, Headers}) of
+    not_connection_owner -> {error, not_connection_owner};
+    {Timeout, StreamId}  -> wait_response(ConnectionId, Timeout, StreamId)
   end.
 
-%% @hidden
-open_out(Connection) ->
-  KeyFile = case Connection#apns_connection.key_file of
-    undefined -> [];
-    Filename -> [{keyfile, filename:absname(Filename)}]
-  end,
-  SslOpts = [
-    {certfile, filename:absname(Connection#apns_connection.cert_file)},
-    {mode, binary} | KeyFile
-  ],
-  RealSslOpts = case Connection#apns_connection.cert_password of
-    undefined -> SslOpts;
-    Password -> [{password, Password} | SslOpts]
-  end,
-
-  case ssl:connect(
-    Connection#apns_connection.apple_host,
-    Connection#apns_connection.apple_port,
-    RealSslOpts,
-    Connection#apns_connection.timeout
-  ) of
-    {ok, OutSocket} -> {ok, OutSocket};
-    {error, Reason} -> {error, Reason}
+%% @doc Pushes notification to certificate APNs connection.
+-spec push_notification( name() | pid()
+                       , apns:token()
+                       , apns:device_id()
+                       , notification()
+                       , apns:headers()) -> apns:response() | {error, not_connection_owner}.
+push_notification(ConnectionId, Token, DeviceId, Notification, Headers) ->
+  case gen_server:call(ConnectionId, {push_notification, Token, DeviceId, Notification, Headers}) of
+    not_connection_owner -> {error, not_connection_owner};
+    {Timeout, StreamId}  -> wait_response(ConnectionId, Timeout, StreamId)
   end.
 
-%% @hidden
-open_feedback(Connection) ->
-  KeyFile = case Connection#apns_connection.key_file of
-    undefined -> [];
-    Filename -> [{keyfile, filename:absname(Filename)}]
-  end,
-  SslOpts = [
-    {certfile, filename:absname(Connection#apns_connection.cert_file)},
-    {mode, binary} | KeyFile
-  ],
-  RealSslOpts = case Connection#apns_connection.cert_password of
-    undefined -> SslOpts;
-    Password -> [{password, Password} | SslOpts]
-  end,
-  case ssl:connect(
-    Connection#apns_connection.feedback_host,
-    Connection#apns_connection.feedback_port,
-    RealSslOpts,
-    Connection#apns_connection.timeout
-  ) of
-    {ok, InSocket} -> {ok, InSocket};
-    {error, Reason} -> {error, Reason}
-  end.
+%%%===================================================================
+%%% gen_server callbacks
+%%%===================================================================
 
-%% @hidden
--spec handle_call(X, reference(), state()) -> {reply, ok, state()} | {stop, {unknown_request, X}, state()}.
-handle_call(Msg, From, State=#state{out_socket=undefined,connection=Connection}) ->
-  try
-    error_logger:info_msg("Reconnecting to APNS...~n"),
-    case open_out(Connection) of
-      {ok, Socket} -> handle_call(Msg, From, State#state{out_socket=Socket});
-      {error, Reason} -> {stop, Reason}
-    end
-  catch
-    _:{error, Reason2} -> {stop, Reason2}
-  end;
+-spec init({connection(), pid()}) -> {ok, State :: state()}.
+init({Connection, Client}) ->
+  process_flag(trap_exit, true),
+  ConnectionPid = open_http2_connection(Connection),
 
-handle_call(Msg, _From, #state{out_socket=Socket} = State) when is_record(Msg, apns_msg) ->
-  case build_and_send(Msg, Socket) of
-    ok ->
-      {reply, ok, State};
-    {error, Reason} ->
-      {stop, {error, Reason}, State}
-  end;
+  {ok, #{ connection       => Connection
+        , http2_connection => ConnectionPid
+        , client           => Client
+        , backoff          => 1
+        , backoff_ceiling  => application:get_env(apns, backoff_ceiling, 10)
+        }}.
 
-handle_call(Request, _From, State) ->
-  {stop, {unknown_request, Request}, {unknown_request, Request}, State}.
+-spec handle_call( Request :: term(), From :: {pid(), term()}, State) ->
+  {reply, term(), State}.
+handle_call(http2_connection, _From, #{http2_connection := HTTP2Conn} = State) ->
+  {reply, HTTP2Conn, State};
+handle_call( {push_notification, DeviceId, Notification, Headers}
+           , {From, _}
+           , #{client := From} = State) ->
+  #{connection := Connection, http2_connection := HTTP2Conn} = State,
+  #{timeout := Timeout} = Connection,
+  StreamId = push(HTTP2Conn, DeviceId, Headers, Notification, Connection),
+  {reply, {Timeout, StreamId}, State};
+handle_call( {push_notification, Token, DeviceId, Notification, HeadersMap}
+           , {From, _}
+           , #{client := From} = State) ->
+  #{connection := Connection, http2_connection := HTTP2Conn} = State,
+  Headers = add_authorization_header(HeadersMap, Token),
+  #{timeout := Timeout} = Connection,
+  StreamId = push(HTTP2Conn, DeviceId, Headers, Notification, Connection),
+  {reply, {Timeout, StreamId}, State};
+handle_call( {push_notification, _, _, _}, _From, State) ->
+  {reply, not_connection_owner, State};
+handle_call( {push_notification, _, _, _, _}, _From, State) ->
+  {reply, not_connection_owner, State};
+handle_call(_Request, _From, State) ->
+  {reply, ok, State}.
 
-%% @hidden
--spec handle_cast(stop | #apns_msg{}, state()) -> {noreply, state()} | {stop, normal | {error, term()}, state()}.
-handle_cast(Msg, State=#state{out_socket=undefined,connection=Connection}) ->
-  try
-    error_logger:info_msg("Reconnecting to APNS...~n"),
-    case open_out(Connection) of
-      {ok, Socket} -> handle_cast(Msg, State#state{out_socket=Socket});
-      {error, Reason} -> {stop, Reason}
-    end
-  catch
-    _:{error, Reason2} -> {stop, Reason2}
-  end;
-
-handle_cast(Msg, #state{out_socket=Socket} = State) when is_record(Msg, apns_msg) ->
-  case build_and_send(Msg, Socket) of
-    ok ->
-      {noreply, State};
-    {error, Reason} ->
-      {stop, {error, Reason}, State}
-  end;
-
+-spec handle_cast(Request :: term(), State) ->
+  {noreply, State}.
 handle_cast(stop, State) ->
-  {stop, normal, State}.
+  {stop, normal, State};
+handle_cast(_Request, State) ->
+  {noreply, State}.
 
-%% @hidden
--spec handle_info({ssl, tuple(), binary()} | {ssl_closed, tuple()} | X, state()) -> {noreply, state()} | {stop, ssl_closed | {unknown_request, X}, state()}.
-handle_info({ssl, SslSocket, Data}, State = #state{out_socket = SslSocket,
-                                                   connection =
-                                                     #apns_connection{error_fun = Error},
-                                                   out_buffer = CurrentBuffer}) ->
-  case <<CurrentBuffer/binary, Data/binary>> of
-    <<Command:1/unit:8, StatusCode:1/unit:8, MsgId:4/binary, Rest/binary>> ->
-      case Command of
-        8 -> %% Error
-          Status = parse_status(StatusCode),
-          try Error(MsgId, Status) of
-            stop -> throw({stop, {msg_error, MsgId, Status}, State});
-            _ -> noop
-          catch
-            _:ErrorResult ->
-              error_logger:error_msg("Error trying to inform error (~p) msg:~n\t~p~n",
-                                     [Status, ErrorResult])
-          end,
-          case erlang:size(Rest) of
-            0 -> {noreply, State#state{out_buffer = <<>>}}; %% It was a whole package
-            _ -> handle_info({ssl, SslSocket, Rest}, State#state{out_buffer = <<>>})
-          end;
-        Command ->
-          throw({stop, {unknown_command, Command}, State})
-      end;
-    NextBuffer -> %% We need to wait for the rest of the message
-      {noreply, State#state{out_buffer = NextBuffer}}
-  end;
-handle_info({ssl, SslSocket, Data}, State = #state{in_socket  = SslSocket,
-                                                   connection =
-                                                     #apns_connection{feedback_fun = Feedback},
-                                                   in_buffer  = CurrentBuffer
-                                                  }) ->
-  case <<CurrentBuffer/binary, Data/binary>> of
-    <<TimeT:4/big-unsigned-integer-unit:8,
-      Length:2/big-unsigned-integer-unit:8,
-      Token:Length/binary,
-      Rest/binary>> ->
-      try
-          ApnsTimestamp = apns:timestamp(TimeT),
-          HexToken = bin_to_hexstr(Token),
-          Feedback({ApnsTimestamp, HexToken})
-      catch
-        _:Error ->
-          error_logger:error_msg("Error trying to inform feedback token ~p:~n\t~p~nStack trace: ~p~n", [Token, Error, erlang:get_stacktrace()])
-      end,
-      case erlang:size(Rest) of
-        0 -> {noreply, State#state{in_buffer = <<>>}}; %% It was a whole package
-        _ -> handle_info({ssl, SslSocket, Rest}, State#state{in_buffer = <<>>})
-      end;
-    NextBuffer -> %% We need to wait for the rest of the message
-      {noreply, State#state{in_buffer = NextBuffer}}
-  end;
+-spec handle_info(Info :: timeout() | term(), State) -> {noreply, State}.
+handle_info( {'EXIT', HTTP2Conn, _}
+           , #{ http2_connection := HTTP2Conn
+              , client           := Client
+              , backoff          := Backoff
+              , backoff_ceiling  := Ceiling
+              } = State) ->
+  ok = h2_client:stop(HTTP2Conn),
+  Client ! {reconnecting, self()},
+  Sleep = backoff(Backoff, Ceiling) * 1000, % seconds to wait before reconnect
+  {ok, _} = timer:send_after(Sleep, reconnect),
+  {noreply, State#{backoff => Backoff + 1}};
+handle_info(reconnect, State) ->
+  #{ connection      := Connection
+   , client          := Client
+   } = State,
+  HTTP2Conn = open_http2_connection(Connection),
+  Client ! {connection_up, self()},
+  {noreply, State#{http2_connection => HTTP2Conn , backoff => 1}};
+handle_info({'END_STREAM', StreamId}, #{http2_connection := HTTP2Conn, client := Client} = State) ->
+  {ok, {ResponseHeaders, ResponseBody}} = h2_client:get_response(HTTP2Conn, StreamId),
+  {Status, ResponseHeaders2} = normalize_response(ResponseHeaders),
+  ResponseBody2 = normalize_response_body(ResponseBody),
+  Client ! {apns_response, self(), StreamId, {Status, ResponseHeaders2, ResponseBody2}},
+  {noreply, State};
+handle_info(_Info, State) ->
+  {noreply, State}.
 
-handle_info({ssl_closed, SslSocket}, State = #state{in_socket = SslSocket,
-                                                    connection= Connection}) ->
-  error_logger:info_msg("Feedback server disconnected. Waiting ~p millis to connect again...~n",
-                        [Connection#apns_connection.feedback_timeout]),
-  _Timer = erlang:send_after(Connection#apns_connection.feedback_timeout, self(), reconnect),
-  {noreply, State#state{in_socket = undefined}};
+-spec terminate( Reason :: (normal | shutdown | {shutdown, term()} | term())
+               , State  :: state()
+               ) -> ok.
+terminate(_Reason, _State) ->
+  ok.
 
-handle_info(reconnect, State = #state{connection = Connection}) ->
-  error_logger:info_msg("Reconnecting the Feedback server...~n"),
-  case open_feedback(Connection) of
-    {ok, InSocket} -> {noreply, State#state{in_socket = InSocket}};
-    {error, Reason} -> {stop, {in_closed, Reason}, State}
-  end;
+-spec code_change(OldVsn :: term() | {down, term()}
+                 , State
+                 , Extra :: term()
+                 ) -> {ok, State}.
+code_change(_OldVsn, State, _Extra) ->
+  {ok, State}.
 
-handle_info({ssl_closed, SslSocket}, State = #state{out_socket = SslSocket}) ->
-  error_logger:info_msg("APNS disconnected~n"),
-  {noreply, State#state{out_socket=undefined}};
+%%%===================================================================
+%%% Connection getters/setters Functions
+%%%===================================================================
 
-handle_info(Request, State) ->
-  {stop, {unknown_request, Request}, State}.
+-spec name(connection()) -> name().
+name(#{name := ConnectionName}) ->
+  ConnectionName.
 
-%% @hidden
--spec terminate(term(), state()) -> ok.
-terminate(_Reason, _State) -> ok.
+-spec host(connection()) -> host().
+host(#{apple_host := Host}) ->
+  Host.
 
-%% @hidden
--spec code_change(term(), state(), term()) -> {ok, state()}.
-code_change(_OldVsn, State, _Extra) ->  {ok, State}.
+-spec port(connection()) -> inet:port_number().
+port(#{apple_port := Port}) ->
+  Port.
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%% Private functions
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-build_and_send(Msg, Socket) ->
-  Payload = build_payload(Msg),
-  BinToken = hexstr_to_bin(Msg#apns_msg.device_token),
-  send_payload(Socket, Msg#apns_msg.id, Msg#apns_msg.expiry, BinToken, Payload).
+-spec certdata(connection()) -> binary().
+certdata(#{certdata := Cert}) ->
+  Cert.
 
-build_payload(#apns_msg{alert = Alert,
-                        badge = Badge,
-                        sound = Sound,
-                        apns_extra=Apns_Extra,
-                        extra = Extra}) ->
-    build_payload([{alert, Alert},
-                   {badge, Badge},
-                   {sound, Sound}] ++ Apns_Extra, Extra).
+-spec certfile(connection()) -> path().
+certfile(#{certfile := Certfile}) ->
+  Certfile.
 
-build_payload(Params, Extra) ->
-  apns_mochijson2:encode(
-    {[{<<"aps">>, do_build_payload(Params, [])} | Extra]}).
-do_build_payload([{Key,Value}|Params], Payload) ->
-  case Value of
-    Value when is_list(Value); is_binary(Value) ->
-      do_build_payload(Params, [{atom_to_binary(Key, utf8), unicode:characters_to_binary(Value)} | Payload]);
-    Value when is_integer(Value) ->
-      do_build_payload(Params, [{atom_to_binary(Key, utf8), Value} | Payload]);
-    #loc_alert{action = Action,
-               args   = Args,
-               body   = Body,
-               image  = Image,
-               key    = LocKey} ->
-      Json = {case Body of
-                none -> [];
-                Body -> [{<<"body">>, unicode:characters_to_binary(Body)}]
-              end ++ case Action of
-                       none -> [];
-                       Action -> [{<<"action-loc-key">>, unicode:characters_to_binary(Action)}]
-                     end ++ case Image of
-                              none -> [];
-                              Image -> [{<<"launch-image">>, unicode:characters_to_binary(Image)}]
-                            end ++
-                [{<<"loc-key">>, unicode:characters_to_binary(LocKey)},
-                 {<<"loc-args">>, lists:map(fun unicode:characters_to_binary/1, Args)}]},
-      do_build_payload(Params, [{atom_to_binary(Key, utf8), Json} | Payload]);
-    _ ->
-      do_build_payload(Params,Payload)
-  end;
-do_build_payload([], Payload) ->
-  {Payload}.
+-spec keydata(connection()) -> keydata().
+keydata(#{keydata := Key}) ->
+  Key.
 
--spec send_payload(tuple(), binary(), non_neg_integer(), binary(), iolist()) -> ok | {error, term()}.
-send_payload(Socket, MsgId, Expiry, BinToken, Payload) ->
-    BinPayload = list_to_binary(Payload),
-    PayloadLength = erlang:size(BinPayload),
-    Packet = [<<1:8, MsgId/binary, Expiry:4/big-unsigned-integer-unit:8,
-                32:16/big,
-                BinToken/binary,
-                PayloadLength:16/big,
-                BinPayload/binary>>],
-    ssl:send(Socket, Packet).
+-spec keyfile(connection()) -> path().
+keyfile(#{keyfile := Keyfile}) ->
+  Keyfile.
 
-hexstr_to_bin(S) ->
-  hexstr_to_bin(S, []).
-hexstr_to_bin([], Acc) ->
-  list_to_binary(lists:reverse(Acc));
-hexstr_to_bin([$ |T], Acc) ->
-    hexstr_to_bin(T, Acc);
-hexstr_to_bin([X,Y|T], Acc) ->
-  {ok, [V], []} = io_lib:fread("~16u", [X,Y]),
-  hexstr_to_bin(T, [V | Acc]).
+-spec type(connection()) -> type().
+type(#{type := Type}) ->
+  Type.
 
-bin_to_hexstr(Binary) ->
-    L = size(Binary),
-    Bits = L * 8,
-    <<X:Bits/big-unsigned-integer>> = Binary,
-    F = lists:flatten(io_lib:format("~~~B.16.0B", [L * 2])),
-    lists:flatten(io_lib:format(F, [X])).
+%%%===================================================================
+%%% Internal Functions
+%%%===================================================================
 
-parse_status(0) -> no_errors;
-parse_status(1) -> processing_error;
-parse_status(2) -> missing_token;
-parse_status(3) -> missing_topic;
-parse_status(4) -> missing_payload;
-parse_status(5) -> missing_token_size;
-parse_status(6) -> missing_topic_size;
-parse_status(7) -> missing_payload_size;
-parse_status(8) -> invalid_token;
-parse_status(_) -> unknown.
+-spec open_http2_connection(connection()) -> ConnectionPid :: pid().
+open_http2_connection(Connection) ->
+  Host = host(Connection),
+
+  TransportOpts = case type(Connection) of
+    certdata ->
+      Cert = certdata(Connection),
+      Key = keydata(Connection),
+      [{cert, Cert}, {key, Key}];
+    cert ->
+      Certfile = certfile(Connection),
+      Keyfile = keyfile(Connection),
+      [{certfile, Certfile}, {keyfile, Keyfile}];
+    token ->
+      []
+  end,
+  {ok, ConnectionPid} = h2_client:start_link(https, Host, TransportOpts),
+  ConnectionPid.
+
+-spec get_headers(binary(), apns:headers(), connection()) -> list().
+get_headers(DeviceId, Headers, Connection) ->
+  List = [ {<<"apns-id">>, apns_id}
+         , {<<"apns-expiration">>, apns_expiration}
+         , {<<"apns-priority">>, apns_priority}
+         , {<<"apns-topic">>, apns_topic}
+         , {<<"apns-collapse_id">>, apns_collapse_id}
+         , {<<"authorization">>, apns_auth_token}
+         ],
+  F = fun({ActualHeader, Key}) ->
+    case (catch maps:get(Key, Headers)) of
+      {'EXIT', {{badkey, Key}, _}} -> [];
+      Value -> [{ActualHeader, Value}]
+    end
+  end,
+  Headers2 = lists:flatmap(F, List),
+  lists:append(Headers2, mandatory_headers(DeviceId, Connection)).
+
+-spec mandatory_headers(binary(), connection()) -> list().
+mandatory_headers(DeviceId, #{apple_host := Host, apple_port := Port}) ->
+  Host2 = list_to_binary(Host),
+  Port2 = integer_to_binary(Port),
+  [ {<<":method">>, <<"POST">>}
+  , {<<":path">>, get_device_path(DeviceId)}
+  , {<<":scheme">>, <<"https">>}
+  , {<<":authority">>, <<Host2/binary, $:, Port2/binary>>}
+  ].
+
+-spec get_device_path(apns:device_id()) -> binary().
+get_device_path(DeviceId) ->
+  <<"/3/device/", DeviceId/binary>>.
+
+-spec add_authorization_header(apns:headers(), apnd:token()) -> apns:headers().
+add_authorization_header(Headers, Token) ->
+  Headers#{apns_auth_token => <<"bearer ", Token/binary>>}.
+
+-spec push(pid(), apns:device_id(), apns:headers(), notification(), connection()) ->
+  apns:stream_id().
+push(HTTP2Conn, DeviceId, HeadersMap, Notification, Connection) ->
+  Headers = get_headers(DeviceId, HeadersMap, Connection),
+  {ok, StreamID} = h2_client:send_request(HTTP2Conn, Headers, Notification),
+  StreamID.
+
+-spec normalize_response(list()) -> {integer(), list()}.
+normalize_response(ResponseHeaders) ->
+  {<<":status">>, Status} = lists:keyfind(<<":status">>, 1, ResponseHeaders),
+  {binary_to_integer(Status), lists:keydelete(<<":status">>, 1, ResponseHeaders)}.
+
+-spec normalize_response_body(list()) -> list() | no_body.
+normalize_response_body([]) ->
+  no_body;
+normalize_response_body([ResponseBody]) ->
+  jsx:decode(ResponseBody).
+
+-spec wait_response(name() | pid(), integer(), integer()) -> apns:response().
+wait_response(ConnectionId, Timeout, StreamID) when is_atom(ConnectionId) ->
+  Server = whereis(ConnectionId),
+  wait_response(Server, Timeout, StreamID);
+wait_response(ConnectionId, Timeout, StreamID) when is_pid(ConnectionId) ->
+  receive
+    {apns_response, ConnectionId, StreamID, Response} -> Response
+  after
+    Timeout -> {timeout, StreamID}
+  end.
+
+-spec backoff(non_neg_integer(), non_neg_integer()) -> non_neg_integer().
+backoff(N, Ceiling) ->
+  case (math:pow(2, N) - 1) of
+    R when R > Ceiling ->
+      Ceiling;
+    NextN ->
+      NString = float_to_list(NextN, [{decimals, 0}]),
+      list_to_integer(NString)
+  end.

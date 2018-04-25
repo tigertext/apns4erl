@@ -1,282 +1,219 @@
-%%-------------------------------------------------------------------
-%% @author Fernando Benavides <fernando.benavides@inakanetworks.com>
-%% @copyright (C) 2010 Fernando Benavides <fernando.benavides@inakanetworks.com>
-%% @doc Apple Push Notification Server for Erlang
-%% @end
-%%-------------------------------------------------------------------
+%%% @doc Main module for apns4erl API. Use this one from your own applications.
+%%%
+%%% Copyright 2017 Erlang Solutions Ltd.
+%%%
+%%% Licensed under the Apache License, Version 2.0 (the "License");
+%%% you may not use this file except in compliance with the License.
+%%% You may obtain a copy of the License at
+%%%
+%%%     http://www.apache.org/licenses/LICENSE-2.0
+%%%
+%%% Unless required by applicable law or agreed to in writing, software
+%%% distributed under the License is distributed on an "AS IS" BASIS,
+%%% WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+%%% See the License for the specific language governing permissions and
+%%% limitations under the License.
+%%% @end
+%%% @copyright Inaka <hello@inaka.net>
+%%%
 -module(apns).
--vsn('1.0').
+-author("Felipe Ripoll <felipe@inakanetworks.com>").
 
--include("apns.hrl").
--include("localized.hrl").
+%% API
+-export([ start/0
+        , stop/0
+        , connect/1
+        , connect/2
+        , close_connection/1
+        , push_notification/3
+        , push_notification/4
+        , push_notification_token/4
+        , push_notification_token/5
+        , default_headers/0
+        , generate_token/2
+        , get_feedback/0
+        , get_feedback/1
+        ]).
 
--define(EPOCH, 62167219200).
--define(MAX_PAYLOAD, 256).
+-export_type([ json/0
+             , device_id/0
+             , response/0
+             , token/0
+             , headers/0
+             , stream_id/0
+             ]).
 
--export([start/0, stop/0]).
--export([connect/0, connect/1, connect/2, connect/3, disconnect/1]).
--export([send_badge/3, send_message/2, send_message/3, send_message/4, send_message/5,
-         send_message/6, send_message/7, send_message/8]).
--export([send_badge_sync/3, send_message_sync/2, send_message_sync/3, send_message_sync/4, send_message_sync/5,
-         send_message_sync/6, send_message_sync/7, send_message_sync/8]).
--export([estimate_available_bytes/1]).
--export([message_id/0, expiry/1, timestamp/1]).
+-type json()      :: #{binary() | atom() => binary() | json()}.
+-type device_id() :: binary().
+-type stream_id() :: integer().
+-type response()  :: { integer()          % HTTP2 Code
+                     , [term()]           % Response Headers
+                     , [term()] | no_body % Response Body
+                     } | {timeout, stream_id()}.
+-type token()     :: binary().
+-type headers()   :: #{ apns_id          => binary()
+                      , apns_expiration  => binary()
+                      , apns_priority    => binary()
+                      , apns_topic       => binary()
+                      , apns_collapse_id => binary()
+                      , apns_auth_token  => binary()
+                      }.
+-type feedback()  :: apns_feedback:feedback().
 
--type status() :: no_errors | processing_error | missing_token | missing_topic | missing_payload |
-                  missing_token_size | missing_topic_size | missing_payload_size | invalid_token |
-                  unknown.
--export_type([status/0]).
+%%%===================================================================
+%%% API
+%%%===================================================================
 
--type conn_id() :: atom() | pid().
--export_type([conn_id/0]).
-
--type apns_str() :: binary() | string().
--type alert() :: apns_str() | #loc_alert{}.
--export_type([alert/0]).
-
-%% @doc Starts the application
--spec start() -> ok | {error, {already_started, apns}}.
+%% @doc Used when starting the application on the shell.
+-spec start() -> ok.
 start() ->
-  _ = application:start(public_key),
-  _ = application:start(ssl),
-  application:start(apns).
+  {ok, _} = application:ensure_all_started(apns),
+  ok.
 
-%% @doc Stops the application
+%% @doc Stops the Application
 -spec stop() -> ok.
 stop() ->
-  application:stop(apns).
+  ok = application:stop(apns),
+  ok.
 
-%% @doc Opens an unnamed connection using the default parameters
--spec connect() -> {ok, pid()} | {error, Reason::term()}.
-connect() ->
-  connect(default_connection()).
+%% @doc Connects to APNs service with Provider Certificate or Token
+-spec connect( apns_connection:type(), apns_connection:name()) ->
+  {ok, pid()} | {error, timeout}.
+connect(Type, ConnectionName) ->
+  DefaultConnection = apns_connection:default_connection(Type, ConnectionName),
+  connect(DefaultConnection).
 
-%% @doc Opens an unnamed connection using the given feedback or error function
-%%      or using the given #apns_connection{} parameters
-%%      or the name and default configuration if a name is given
--spec connect(atom() | string() | fun((string()) -> _) | #apns_connection{}) -> {ok, pid()} | {error, {already_started, pid()}} | {error, Reason::term()}.
-connect(Name) when is_atom(Name) ->
-  connect(Name, default_connection());
-connect(Connection) when is_record(Connection, apns_connection) ->
-  apns_sup:start_connection(Connection);
-connect(Fun) when is_function(Fun, 1) ->
-  connect((default_connection())#apns_connection{feedback_fun = Fun});
-connect(Fun) when is_function(Fun, 2) ->
-  connect((default_connection())#apns_connection{error_fun = Fun}).
+%% @doc Connects to APNs service
+-spec connect(apns_connection:connection()) -> {ok, pid()} | {error, timeout}.
+connect(Connection) ->
+  apns_sup:create_connection(Connection).
 
-%% @doc Opens an connection named after the atom()
-%%      using the given feedback or error function
-%%      or using the given #apns_connection{} parameters
--spec connect(atom(), string() | fun((string()) -> _) | #apns_connection{}) -> {ok, pid()} | {error, {already_started, pid()}} | {error, Reason::term()}.
-connect(Name, Connection) when is_record(Connection, apns_connection) ->
-  apns_sup:start_connection(Name, Connection);
-connect(Name, Fun) when is_function(Fun, 1) ->
-  connect(Name, (default_connection())#apns_connection{feedback_fun = Fun});
-connect(Name, Fun) when is_function(Fun, 2) ->
-  connect(Name, (default_connection())#apns_connection{error_fun = Fun}).
+%% @doc Closes the connection with APNs service.
+-spec close_connection(apns_connection:name() | pid()) -> ok.
+close_connection(ConnectionId) ->
+  apns_connection:close_connection(ConnectionId).
 
-%% @doc Opens an connection named after the atom()
-%%      using the given feedback and error functions
--spec connect(atom(), fun((binary(), apns:status()) -> stop | _), fun((string()) -> _)) -> {ok, pid()} | {error, {already_started, pid()}} | {error, Reason::term()}.
-connect(Name, ErrorFun, FeedbackFun) ->
-  connect(Name, (default_connection())#apns_connection{error_fun    = ErrorFun,
-                                                       feedback_fun = FeedbackFun}).
+%% @doc Push notification to APNs. It will use the headers provided on the
+%%      environment variables.
+-spec push_notification( apns_connection:name() | pid()
+                       , device_id()
+                       , json()
+                       ) -> response() | {error, not_connection_owner}.
+push_notification(ConnectionId, DeviceId, JSONMap) ->
+  Headers = default_headers(),
+  push_notification(ConnectionId, DeviceId, JSONMap, Headers).
 
-%% @doc Closes an open connection
--spec disconnect(conn_id()) -> ok.
-disconnect(ConnId) ->
-  apns_connection:stop(ConnId).
+%% @doc Push notification to certificate APNs Connection.
+-spec push_notification( apns_connection:name() | pid()
+                       , device_id()
+                       , json()
+                       , headers()
+                       ) -> response() | {error, not_connection_owner}.
+push_notification(ConnectionId, DeviceId, JSONMap, Headers) ->
+  Notification = jsx:encode(JSONMap),
+  apns_connection:push_notification( ConnectionId
+                                   , DeviceId
+                                   , Notification
+                                   , Headers
+                                   ).
 
-%% @doc Sends a message to Apple
--spec send_message(conn_id(), #apns_msg{}) -> ok.
-send_message(ConnId, Msg) ->
-  apns_connection:send_message(ConnId, Msg).
+%% @doc Push notification to APNs with authentication token. It will use the
+%%      headers provided on the environment variables.
+-spec push_notification_token( apns_connection:name() | pid()
+                             , token()
+                             , device_id()
+                             , json()
+                             ) -> response() | {error, not_connection_owner}.
+push_notification_token(ConnectionId, Token, DeviceId, JSONMap) ->
+  Headers = default_headers(),
+  push_notification_token(ConnectionId, Token, DeviceId, JSONMap, Headers).
 
-%% @doc Sends a message to Apple with just a badge
--spec send_badge(conn_id(), string(), integer()) -> ok.
-send_badge(ConnId, DeviceToken, Badge) ->
-  send_message(ConnId, #apns_msg{device_token = DeviceToken,
-                                 badge = Badge}).
+%% @doc Push notification to authentication token APNs Connection.
+-spec push_notification_token( apns_connection:name() | pid()
+                             , token()
+                             , device_id()
+                             , json()
+                             , headers()
+                             ) -> response() | {error, not_connection_owner}.
+push_notification_token(ConnectionId, Token, DeviceId, JSONMap, Headers) ->
+  Notification = jsx:encode(JSONMap),
+  apns_connection:push_notification( ConnectionId
+                                   , Token
+                                   , DeviceId
+                                   , Notification
+                                   , Headers
+                                   ).
 
-%% @doc Sends a message to Apple with just an alert
--spec send_message(conn_id(), string(), alert()) -> ok.
-send_message(ConnId, DeviceToken, Alert) ->
-  send_message(ConnId, #apns_msg{device_token = DeviceToken,
-                                 alert = Alert}).
+-spec generate_token(binary(), binary()) -> token().
+generate_token(TeamId, KeyId) ->
+  Algorithm = <<"ES256">>,
+  Header = jsx:encode([ {alg, Algorithm}
+                      , {typ, <<"JWT">>}
+                      , {kid, KeyId}
+                      ]),
+  Payload = jsx:encode([ {iss, TeamId}
+                       , {iat, apns_utils:epoch()}
+                       ]),
+  HeaderEncoded = base64url:encode(Header),
+  PayloadEncoded = base64url:encode(Payload),
+  DataEncoded = <<HeaderEncoded/binary, $., PayloadEncoded/binary>>,
+  Signature = apns_utils:sign(DataEncoded),
+  <<DataEncoded/binary, $., Signature/binary>>.
 
-%% @doc Sends a message to Apple with an alert and a badge
--spec send_message(conn_id(), Token::string(), Alert::alert(), Badge::integer()) -> ok.
-send_message(ConnId, DeviceToken, Alert, Badge) ->
-  send_message(ConnId, #apns_msg{device_token = DeviceToken,
-                                 badge = Badge,
-                                 alert = Alert}).
+%% @doc Get the default headers from environment variables.
+-spec default_headers() -> apns:headers().
+default_headers() ->
+  Headers = [ apns_id
+            , apns_expiration
+            , apns_priority
+            , apns_topic
+            , apns_collapse_id
+            ],
 
-%% @doc Sends a full message to Apple
--spec send_message(conn_id(), Token::string(), Alert::alert(), Badge::integer(),
-                   Sound::apns_str()) -> ok.
-send_message(ConnId, DeviceToken, Alert, Badge, Sound) ->
-  send_message(ConnId, #apns_msg{alert = Alert,
-                                 badge = Badge,
-                                 sound = Sound,
-                                 device_token = DeviceToken}).
+  default_headers(Headers, #{}).
 
-%% @doc Sends a message to Apple
--spec send_message_sync(pid(), #apns_msg{}) -> ok.
-send_message_sync(Pid, Msg) ->
-  gen_server:call(Pid, Msg).
+%% Requests for feedback to APNs. This requires Provider Certificate.
+-spec get_feedback() -> [feedback()] | {error, term()} | timeout.
+get_feedback() ->
+  {ok, Host} = application:get_env(apns, feedback_host),
+  {ok, Port} = application:get_env(apns, feedback_port),
+  {ok, Certfile} = application:get_env(apns, certfile),
+  Keyfile = application:get_env(apns, keyfile, undefined),
+  {ok, Timeout} = application:get_env(apns, timeout),
+  Config = #{ host     => Host
+            , port     => Port
+            , certfile => Certfile
+            , keyfile  => Keyfile
+            , timeout  => Timeout
+            },
+  get_feedback(Config).
 
-%% @doc Sends a message to Apple with just a badge
--spec send_badge_sync(pid(), string(), integer()) -> ok.
-send_badge_sync(Pid, DeviceToken, Badge) ->
-  send_message_sync(Pid, #apns_msg{device_token = DeviceToken,
-                                      badge = Badge}).
+%% Requests for feedback to APNs. This requires Provider Certificate.
+-spec get_feedback(apns_feedback:feedback_config()) -> [feedback()] | {error, term()} | timeout.
+get_feedback(Config) ->
+  apns_feedback:get_feedback(Config).
 
-%% @doc Sends a message to Apple with just an alert
--spec send_message_sync(pid(), string(), alert()) -> ok.
-send_message_sync(Pid, DeviceToken, Alert) ->
-  send_message_sync(Pid, #apns_msg{device_token = DeviceToken,
-                                      alert = Alert}).
+%%%===================================================================
+%%% Internal Functions
+%%%===================================================================
 
-%% @doc Sends a message to Apple with an alert and a badge
--spec send_message_sync(pid(), Token::string(), Alert::alert(), Badge::integer()) -> ok.
-send_message_sync(Pid, DeviceToken, Alert, Badge) ->
-  send_message_sync(Pid, #apns_msg{device_token = DeviceToken,
-                                      badge = Badge,
-                                      alert = Alert}).
-
-%% @doc Sends a full message to Apple
--spec send_message_sync(pid(), Token::string(), Alert::alert(), Badge::integer(),
-                        Sound::apns_str()) -> ok.
-send_message_sync(Pid, DeviceToken, Alert, Badge, Sound) ->
-  send_message_sync(Pid, #apns_msg{alert = Alert,
-                                      badge = Badge,
-                                      sound = Sound,
-                                      device_token = DeviceToken}).
-
-%% @doc Sends a full message to Apple (complete with expiry)
--spec send_message_sync(pid(), Token::string(), Alert::alert(), Badge::integer(),
-                        Sound::apns_str(), Expiry::non_neg_integer()) -> ok.
-send_message_sync(Pid, DeviceToken, Alert, Badge, Sound, Expiry) ->
-  send_message_sync(Pid, #apns_msg{alert = Alert,
-                                      badge = Badge,
-                                      sound = Sound,
-                                      expiry= Expiry,
-                                      device_token = DeviceToken}).
-
-%% @doc Sends a full message to Apple with expiry and extra arguments
--spec send_message_sync(pid(), Token::string(), Alert::alert(), Badge::integer(),
-                        Sound::apns_str(), Expiry::non_neg_integer(),
-                        ExtraArgs::[apns_mochijson2:json_property()]) -> ok.
-send_message_sync(Pid, DeviceToken, Alert, Badge, Sound, Expiry, ExtraArgs) ->
-  send_message_sync(Pid, #apns_msg{alert = Alert,
-                                     badge = Badge,
-                                     sound = Sound,
-                                     extra = ExtraArgs,
-                                     expiry= Expiry,
-                                     device_token = DeviceToken}).
-
-%% @doc Sends a full message to Apple with id, expiry and extra arguments
--spec send_message_sync(pid(), MsgId::binary(), Token::string(), Alert::alert(),
-                        Badge::integer(), Sound::apns_str(), Expiry::non_neg_integer(),
-                        ExtraArgs::[apns_mochijson2:json_property()]) -> ok.
-send_message_sync(Pid, MsgId, DeviceToken, Alert, Badge, Sound, Expiry, ExtraArgs) ->
-  send_message_sync(Pid, #apns_msg{id     = MsgId,
-                                     alert  = Alert,
-                                     badge  = Badge,
-                                     sound  = Sound,
-                                     extra  = ExtraArgs,
-                                     expiry = Expiry,
-                                     device_token = DeviceToken}).
-
-%% @doc Predicts the number of bytes left in a message for additional data.
--spec estimate_available_bytes(#apns_msg{}) -> integer().
-estimate_available_bytes(#apns_msg{} = Msg) ->
-  Payload = apns_connection:build_payload(Msg),
-  ?MAX_PAYLOAD - erlang:size(list_to_binary(Payload)).
-
-%% @doc Sends a full message to Apple (complete with expiry)
--spec send_message(conn_id(), Token::string(), Alert::alert(), Badge::integer(),
-                   Sound::apns_str(), Expiry::non_neg_integer()) -> ok.
-send_message(ConnId, DeviceToken, Alert, Badge, Sound, Expiry) ->
-  send_message(ConnId, #apns_msg{alert = Alert,
-                                 badge = Badge,
-                                 sound = Sound,
-                                 expiry= Expiry,
-                                 device_token = DeviceToken}).
-
-%% @doc Sends a full message to Apple with expiry and extra arguments
--spec send_message(conn_id(), Token::string(), Alert::alert(), Badge::integer(),
-                   Sound::apns_str(), Expiry::non_neg_integer(),
-                   ExtraArgs::[apns_mochijson2:json_property()]) -> ok.
-send_message(ConnId, DeviceToken, Alert, Badge, Sound, Expiry, ExtraArgs) ->
-  send_message(ConnId, #apns_msg{alert = Alert,
-                                 badge = Badge,
-                                 sound = Sound,
-                                 extra = ExtraArgs,
-                                 expiry= Expiry,
-                                 device_token = DeviceToken}).
-
-%% @doc Sends a full message to Apple with id, expiry and extra arguments
--spec send_message(conn_id(), MsgId::binary(), Token::string(), Alert::alert(),
-                   Badge::integer(), Sound::apns_str(), Expiry::non_neg_integer(),
-                   ExtraArgs::[apns_mochijson2:json_property()]) -> ok.
-send_message(ConnId, MsgId, DeviceToken, Alert, Badge, Sound, Expiry, ExtraArgs) ->
-  send_message(ConnId, #apns_msg{id     = MsgId,
-                                 alert  = Alert,
-                                 badge  = Badge,
-                                 sound  = Sound,
-                                 extra  = ExtraArgs,
-                                 expiry = Expiry,
-                                 device_token = DeviceToken}).
-
-%% @doc  Generates an "unique" and valid message Id
--spec message_id() -> binary().
-message_id() ->
-  {_, _, MicroSecs} = erlang:now(),
-  Secs = calendar:datetime_to_gregorian_seconds(calendar:universal_time()),
-  First = Secs rem 65536,
-  Last = MicroSecs rem 65536,
-  <<First:2/unsigned-integer-unit:8, Last:2/unsigned-integer-unit:8>>.
-
-%% @doc  Generates a valid expiry value for messages.
-%%       If called with <code>none</code> as the parameter, it will return a <a>no-expire</a> value.
-%%       If called with a datetime as the parameter, it will convert it to a valid expiry value.
-%%       If called with an integer, it will add that many seconds to current time and return a valid
-%%        expiry value for that date.
--spec expiry(none | {{1970..9999,1..12,1..31},{0..24,0..60,0..60}} | pos_integer()) -> non_neg_integer().
-expiry(none) -> 0;
-expiry(Secs) when is_integer(Secs) ->
-  calendar:datetime_to_gregorian_seconds(calendar:universal_time()) - ?EPOCH + Secs;
-expiry(Date) ->
-  calendar:datetime_to_gregorian_seconds(Date) - ?EPOCH.
-
--spec timestamp(pos_integer()) -> calendar:datetime().
-timestamp(Secs) ->
-  calendar:gregorian_seconds_to_datetime(Secs + ?EPOCH).
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-get_env(K, Def) ->
-  case application:get_env(apns, K) of
-    {ok, V} -> V;
-    _ -> Def
+%% Build a headers() structure from environment variables.
+-spec default_headers(list(), headers()) -> headers().
+default_headers([], Headers) ->
+  Headers;
+default_headers([Key | Keys], Headers) ->
+  case application:get_env(apns, Key) of
+    {ok, undefined} ->
+      default_headers(Keys, Headers);
+    {ok, Value} ->
+      NewHeaders = Headers#{Key => to_binary(Value)},
+      default_headers(Keys, NewHeaders)
   end.
 
-default_connection() ->
-  DefaultConn = #apns_connection{},
-  DefaultConn#apns_connection{apple_host      = get_env(apple_host,       DefaultConn#apns_connection.apple_host),
-                              apple_port      = get_env(apple_port,       DefaultConn#apns_connection.apple_port),
-                              key_file        = get_env(key_file,         DefaultConn#apns_connection.key_file),
-                              cert_file       = get_env(cert_file,        DefaultConn#apns_connection.cert_file),
-                              timeout         = get_env(timeout,          DefaultConn#apns_connection.timeout),
-                              error_fun       = case get_env(error_fun,   DefaultConn#apns_connection.error_fun) of
-                                                  {M, F} -> fun(I, S) -> M:F(I, S) end;
-                                                  Other -> Other
-                                                end,
-                              feedback_timeout= get_env(feedback_timeout, DefaultConn#apns_connection.feedback_timeout),
-                              feedback_fun    = case get_env(feedback_fun,DefaultConn#apns_connection.feedback_fun) of
-                                                  {M, F} -> fun(T) -> M:F(T) end;
-                                                  Other -> Other
-                                                end,
-                              feedback_host   = get_env(feedback_host,    DefaultConn#apns_connection.feedback_host),
-                              feedback_port   = get_env(feedback_port,    DefaultConn#apns_connection.feedback_port)
-                             }.
+%% Convert to binary
+to_binary(Value) when is_integer(Value) ->
+  list_to_binary(integer_to_list(Value));
+to_binary(Value) when is_list(Value) ->
+  list_to_binary(Value);
+to_binary(Value) when is_binary(Value) ->
+  Value.

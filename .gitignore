@@ -16,3 +16,5 @@ admin/log/*.log
 *.orig
 doc
 rebar
+.idea/
+*.iml
