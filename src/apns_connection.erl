@@ -221,7 +221,10 @@ handle_cast(stop, State) ->
 handle_cast(_Request, State) ->
   {noreply, State}.
 
--spec handle_info(Info :: timeout() | term(), State) -> {noreply, State}.
+-spec handle_info(Info :: timeout() | term(), State) -> {stop, normal, State} | {noreply, State}.
+handle_info( {'EXIT', Client, _}
+    , #{ client := Client} = State) ->
+    {stop, normal, State};
 handle_info( {'EXIT', HTTP2Conn, _}
            , #{ http2_connection := HTTP2Conn
               , client           := Client
