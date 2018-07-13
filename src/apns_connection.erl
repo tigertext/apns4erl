@@ -216,14 +216,17 @@ handle_call(_Request, _From, State) ->
 
 -spec handle_cast(Request :: term(), State) ->
   {noreply, State}.
-handle_cast(stop, State) ->
-  {stop, normal, State};
+handle_cast(stop, #{http2_connection := HTTP2Conn} = State) ->
+    h2_client:stop(HTTP2Conn),
+    {stop, normal, State};
 handle_cast(_Request, State) ->
   {noreply, State}.
 
 -spec handle_info(Info :: timeout() | term(), State) -> {stop, normal, State} | {noreply, State}.
 handle_info( {'EXIT', Client, _}
-    , #{ client := Client} = State) ->
+    , #{http2_connection := HTTP2Conn,
+        client := Client} = State) ->
+    h2_client:stop(HTTP2Conn),
     {stop, normal, State};
 handle_info( {'EXIT', HTTP2Conn, _}
            , #{ http2_connection := HTTP2Conn
