@@ -23,6 +23,7 @@
 
 %% API
 -export([ start_link/2
+        , start/2
         , default_connection/2
         , name/1
         , host/1
@@ -94,6 +95,15 @@ start_link(#{name := undefined} = Connection, Client) ->
 start_link(Connection, Client) ->
   Name = name(Connection),
   gen_server:start_link({local, Name}, ?MODULE, {Connection, Client}, []).
+
+%% @doc starts the gen_server
+-spec start(connection(), pid()) ->
+    {ok, Pid :: pid()} | ignore | {error, Reason :: term()}.
+start(#{name := undefined} = Connection, Client) ->
+    gen_server:start(?MODULE, {Connection, Client}, []);
+start(Connection, Client) ->
+    Name = name(Connection),
+    gen_server:start({local, Name}, ?MODULE, {Connection, Client}, []).
 
 %% @doc Builds a connection() map from the environment variables.
 -spec default_connection(type(), name()) -> connection().
@@ -223,11 +233,6 @@ handle_cast(_Request, State) ->
   {noreply, State}.
 
 -spec handle_info(Info :: timeout() | term(), State) -> {stop, normal, State} | {noreply, State}.
-handle_info( {'EXIT', Client, _}
-    , #{http2_connection := HTTP2Conn,
-        client := Client} = State) ->
-    h2_client:stop(HTTP2Conn),
-    {stop, normal, State};
 handle_info( {'EXIT', HTTP2Conn, _}
            , #{ http2_connection := HTTP2Conn
               , client           := Client
