@@ -23,6 +23,7 @@
 
 %% API
 -export([ start_link/2
+        , start/2
         , default_connection/2
         , name/1
         , host/1
@@ -94,6 +95,15 @@ start_link(#{name := undefined} = Connection, Client) ->
 start_link(Connection, Client) ->
   Name = name(Connection),
   gen_server:start_link({local, Name}, ?MODULE, {Connection, Client}, []).
+
+%% @doc starts the gen_server
+-spec start(connection(), pid()) ->
+    {ok, Pid :: pid()} | ignore | {error, Reason :: term()}.
+start(#{name := undefined} = Connection, Client) ->
+    gen_server:start(?MODULE, {Connection, Client}, []);
+start(Connection, Client) ->
+    Name = name(Connection),
+    gen_server:start({local, Name}, ?MODULE, {Connection, Client}, []).
 
 %% @doc Builds a connection() map from the environment variables.
 -spec default_connection(type(), name()) -> connection().
@@ -216,8 +226,9 @@ handle_call(_Request, _From, State) ->
 
 -spec handle_cast(Request :: term(), State) ->
   {noreply, State}.
-handle_cast(stop, State) ->
-  {stop, normal, State};
+handle_cast(stop, #{http2_connection := HTTP2Conn} = State) ->
+    h2_client:stop(HTTP2Conn),
+    {stop, normal, State};
 handle_cast(_Request, State) ->
   {noreply, State}.
 
@@ -337,7 +348,7 @@ get_headers(DeviceId, Headers, Connection) ->
     end
   end,
   Headers2 = lists:flatmap(F, List),
-  lists:append(Headers2, mandatory_headers(DeviceId, Connection)).
+  lists:append(mandatory_headers(DeviceId, Connection), Headers2).
 
 -spec mandatory_headers(binary(), connection()) -> list().
 mandatory_headers(DeviceId, #{apple_host := Host, apple_port := Port}) ->
