@@ -31,6 +31,7 @@
         , push_notification_token/5
         , default_headers/0
         , generate_token/2
+        , generate_token/3
         , get_feedback/0
         , get_feedback/1
         ]).
@@ -159,6 +160,22 @@ generate_token(TeamId, KeyId) ->
   DataEncoded = <<HeaderEncoded/binary, $., PayloadEncoded/binary>>,
   Signature = apns_utils:sign(DataEncoded),
   <<DataEncoded/binary, $., Signature/binary>>.
+
+-spec generate_token(string(), binary(), binary()) -> token().
+generate_token(TokenKeyFile, TeamId, KeyId) ->
+    Algorithm = <<"ES256">>,
+    Header = jsx:encode([ {alg, Algorithm}
+        , {typ, <<"JWT">>}
+        , {kid, KeyId}
+    ]),
+    Payload = jsx:encode([ {iss, TeamId}
+        , {iat, apns_utils:epoch()}
+    ]),
+    HeaderEncoded = base64url:encode(Header),
+    PayloadEncoded = base64url:encode(Payload),
+    DataEncoded = <<HeaderEncoded/binary, $., PayloadEncoded/binary>>,
+    Signature = apns_utils:sign(TokenKeyFile, DataEncoded),
+    <<DataEncoded/binary, $., Signature/binary>>.
 
 %% @doc Get the default headers from environment variables.
 -spec default_headers() -> apns:headers().
