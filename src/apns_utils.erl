@@ -21,6 +21,7 @@
 
 % API
 -export([ sign/1
+        , sign/2
         , epoch/0
         , bin_to_hexstr/1
         , seconds_to_timestamp/1
@@ -34,12 +35,16 @@
 %% Signs the given binary.
 -spec sign(binary()) -> binary().
 sign(Data) ->
-  {ok, KeyPath} = application:get_env(apns, token_keyfile),
-  Command = "printf '" ++
-            binary_to_list(Data) ++
-            "' | openssl dgst -binary -sha256 -sign " ++ KeyPath ++ " | base64",
-  {0, Result} = apns_os:cmd(Command),
-  strip_b64(list_to_binary(Result)).
+    {ok, KeyPath} = application:get_env(apns, token_keyfile),
+    sign(KeyPath, Data).
+
+-spec sign(string(), binary()) -> binary().
+sign(KeyPath, Data) ->
+    Command = "printf '" ++
+        binary_to_list(Data) ++
+        "' | openssl dgst -binary -sha256 -sign " ++ KeyPath ++ " | base64",
+    {0, Result} = apns_os:cmd(Command),
+    strip_b64(list_to_binary(Result)).
 
 %% Retrieves the epoch date.
 -spec epoch() -> integer().
