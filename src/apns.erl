@@ -57,6 +57,7 @@
                       , apns_priority    => binary()
                       , apns_topic       => binary()
                       , apns_collapse_id => binary()
+                      , apns_push_type   => binary()
                       , apns_auth_token  => binary()
                       }.
 -type feedback()  :: apns_feedback:feedback().
@@ -185,9 +186,11 @@ default_headers() ->
             , apns_priority
             , apns_topic
             , apns_collapse_id
+            , apns_push_type
             ],
 
-  default_headers(Headers, #{}).
+  %% The apns_push_type key is required starting from iOS 13.
+  default_headers(Headers, #{apns_push_type => <<"alert">>}).
 
 %% Requests for feedback to APNs. This requires Provider Certificate.
 -spec get_feedback() -> [feedback()] | {error, term()} | timeout.
@@ -219,10 +222,10 @@ get_feedback(Config) ->
 default_headers([], Headers) ->
   Headers;
 default_headers([Key | Keys], Headers) ->
-  case application:get_env(apns, Key) of
-    {ok, undefined} ->
+  case application:get_env(apns, Key, undefined) of
+    undefined ->
       default_headers(Keys, Headers);
-    {ok, Value} ->
+    Value ->
       NewHeaders = Headers#{Key => to_binary(Value)},
       default_headers(Keys, NewHeaders)
   end.
