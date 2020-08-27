@@ -286,8 +286,11 @@ host(#{apple_host := Host}) ->
   Host.
 
 -spec port(connection()) -> inet:port_number().
-port(#{apple_port := Port}) ->
-  Port.
+port(#{apple_port := Port}) when is_integer(Port) ->
+  Port;
+
+port(_) ->
+  443.
 
 -spec certdata(connection()) -> binary().
 certdata(#{certdata := Cert}) ->
@@ -316,6 +319,7 @@ type(#{type := Type}) ->
 -spec open_http2_connection(connection()) -> ConnectionPid :: pid().
 open_http2_connection(Connection) ->
   Host = host(Connection),
+  Port = port(Connection),
 
   TransportOpts = case type(Connection) of
     certdata ->
@@ -329,7 +333,7 @@ open_http2_connection(Connection) ->
     token ->
       []
   end,
-  {ok, ConnectionPid} = h2_client:start_link(https, Host, TransportOpts),
+  {ok, ConnectionPid} = h2_client:start_link(https, Host, Port, TransportOpts),
   ConnectionPid.
 
 -spec get_headers(binary(), apns:headers(), connection()) -> list().
