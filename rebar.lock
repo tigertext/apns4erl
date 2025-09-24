@@ -1,0 +1,18 @@
+{"1.1.0",
+[{<<"base64url">>,
+  {git,"git@github.com:dvv/base64url.git",
+       {ref,"f2c64ed8b9bebc536fad37ad97243452b674b837"}},
+  0},
+ {<<"chatterbox">>,
+  {git,"git@github.com:tigertext/chatterbox.git",
+       {ref,"6f69a2fb7ef0e0bf7ee4f47593424fa3f564708e"}},
+  0},
+ {<<"hpack">>,{pkg,<<"hpack_erl">>,<<"0.2.3">>},1},
+ {<<"jsx">>,
+  {git,"git@github.com:talentdeficit/jsx.git",
+       {ref,"d4b6d3dc5fd9e759ff7a0c476654ea5124f5bae9"}},
+  0}]}.
+[
+{pkg_hash,[
+ {<<"hpack">>, <<"17670F83FF984AE6CD74B1C456EDDE906D27FF013740EE4D9EFAA4F1BF999633">>}]}
+].
